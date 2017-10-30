@@ -1,0 +1,47 @@
+{
+  "tests": {
+    "honeypot": true,
+    "honeypot_vals": {
+      "pos_name": "website_url",
+      "pos_val": "http://www.blurryphoto.com",
+      "neg_name": "private_email",
+      "neg_val": ""
+    },
+    "timestamp": true,
+    "timestamp_details": {
+      "test_too_old": true,
+      "test_too_new": true,
+      "fail_older_than": 28800,
+      "fail_newer_than": 3
+    },
+    "browser_support": true,
+    "supports": {
+      "javascript": true,
+      "cookie": true
+    },
+    "js_chk_details": {
+      "input_name": "easjst",
+      "input_val": "very-js"
+    },
+    "cookie_details": {
+      "name": "easct",
+      "val": "very-cookie",
+      "expires": 28800
+    }
+  },
+  "use_database": true,
+  "db_type": "sqlite",
+  "db_details": {
+    "host": "localhost",
+    "name": "storage.db",
+    "user": "epohs",
+    "pass": "password"
+  },
+  "security_salt": "5982d2411abe39d2b9f09fdaebe1c9bf",
+  "noshow_data_name": "eas-cntrl-only",
+  "dirs": {
+    "javascript": "js",
+    "css": "css",
+    "database": "db"
+  }
+}
