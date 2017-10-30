@@ -3,10 +3,10 @@
  * 
  */
 
-define('DEBUG', true);
+define('EAS_DEBUG', true);
 
 
-if (DEBUG):
+if (EAS_DEBUG):
   error_reporting(E_ALL);
   ini_set('display_errors', 'on');
   ini_set("log_errors", 1);
@@ -72,8 +72,20 @@ class epohs_Anti_Spam {
 
     endif;
 
+
+
+    // This MUST happen *before* any HTML
+    // is output to the page.
+    if ( $this->config_var(['tests', 'supports', 'cookie']) ):
+
+      $this->init_cookie();
+
+    endif;
+
+
+
     // Close file db connection
-    $this->db = null;
+    //$this->db = null;
 
   } // __construct()
 
@@ -98,9 +110,31 @@ class epohs_Anti_Spam {
     echo '<link rel="stylesheet" type="text/css" href = "' . $this->self_url . $this->config_var(['dirs', 'css']) . '/anti-spam.css" />' . PHP_EOL;
 
 
-    if (DEBUG):
-      echo '<input type="hidden" name="epohs-anti-spam" value="true" />' . PHP_EOL;
+
+    if ( $this->config_var('use_database') ):
+
+      $visitor_ip = $this->get_client_ip();
+      $form_nonce = hash('crc32b', ($visitor_ip . $this->cur_time()));
+
+      $field_args = array(
+                      'type' => 'hidden',
+                      'name' => $this->config_var('form_id_name'),
+                      'value' => $form_nonce
+                    );
+
+      if (EAS_DEBUG):
+        $field_args['extra'] = array('data-visitor-ip' => $visitor_ip);
+      endif;
+
+
+      $this->insert_form_nonce($form_nonce, $visitor_ip);
+      
+      // Write a hidden field containing our unique form ID
+      $this->form_field($field_args);
+
     endif;
+
+
 
 
     if ( $this->config_var(['tests', 'honeypot']) ):
@@ -116,12 +150,6 @@ class epohs_Anti_Spam {
 
     endif;
 
-
-    if ( $this->config_var(['tests', 'supports', 'cookie']) ):
-
-      $this->init_cookie();
-
-    endif;
 
 
   } // init_form()
@@ -161,6 +189,14 @@ class epohs_Anti_Spam {
 
     endif;
 
+
+
+    if ( $this->config_var(['tests', 'supports', 'cookie']) ):
+
+      $this->check_cookie();
+
+    endif;
+
   } // check_form()
 
 
@@ -197,7 +233,6 @@ class epohs_Anti_Spam {
             ));
 
   } // init_honeypot()
-
 
 
 
@@ -290,10 +325,13 @@ class epohs_Anti_Spam {
    * 
    * 
    */
-  private function check_timestamp() {
+  private function check_timestamp($ts = false) {
 
-
-    $posted_timestamp_val = ( isset($_POST['secret_token']) ) ? trim($_POST['secret_token']) : false;
+    if ($ts):
+      
+    else:
+      $posted_timestamp_val = ( isset($_POST['secret_token']) ) ? trim($_POST['secret_token']) : false;
+    endif;
 
 
     // Empty timestamp
@@ -374,7 +412,7 @@ class epohs_Anti_Spam {
       ?>
       <script type="text/javascript">
       //<![CDATA[
-      <?= join(PHP_EOL, $js_commands); ?>
+      <?= join(PHP_EOL, $js_commands) . PHP_EOL; ?>
       //]]>
       </script>
       <?
@@ -432,14 +470,100 @@ class epohs_Anti_Spam {
       $c_name = $this->config_var(['tests', 'cookie_details', 'name']);
       $c_val = ($this->config_var(['tests', 'timestamp'])) ? $this->cur_time() : $this->config_var(['tests', 'cookie_details', 'val']);
       $c_exp = $this->config_var(['tests', 'cookie_details', 'expires']);
+
+      setcookie($c_name, $c_val, time() + $c_exp);
       
     endif;
 
 
 
+  } // init_cookie()
 
-  } // init_javascript()
 
+
+
+
+  /**
+  *
+  *
+  */
+  public function check_cookie() {
+
+    $cookie_name = $this->config_var(['tests', 'cookie_details', 'name']);
+
+    $this->log('c_name: ' . var_export($cookie_name, true) . __LINE__);
+
+    // First, make sure there was a cookie passed
+    if ( isset($_COOKIE[$cookie_name]) ):
+
+      $check_timestamp = ($this->config_var(['tests', 'timestamp'])) ? true : false;
+      $passed_val = $_COOKIE[$cookie_name];
+
+
+      if ($check_timestamp):
+
+        $this->log('passed val: ' . var_export($passed_val, true) . __LINE__);
+
+        // Check the timestamp validity
+        $is_ts_good = $this->check_javascript($passed_val);
+
+
+        if ( $is_ts_good ):
+
+          // If we're using a database, we can
+          // check to ensure that not only is
+          // the timestamp a valid timestam, but
+          // that is is the actual timestamp we
+          // assigned to the original form.
+          if ( $this->config_var('use_database') ):
+
+            $passed_form_id = ( isset($_POST[$this->config_var('form_id_name')]) ) ? trim($_POST[$this->config_var('form_id_name')]) : false;
+            $db_nonce = $this->get_form_nonce();
+
+
+            $this->log('db_nonce: ' . var_export($db_nonce, true) . __LINE__);
+
+            if ( ($db_nonce == false) || ($passed_form_id != $db_nonce) ):
+
+              echo 'Cookies dont match';
+              return -515;
+
+            endif;
+
+          endif;
+
+        else:
+
+          echo 'Bad timestamp in cookie';
+          return -510;
+
+        endif;
+
+
+      else:
+
+        // Just check the cookie value set in the config file.
+        if ( $passed_val != $this->config_var(['tests', 'cookie_details', 'val']) ):
+
+          echo 'Bad cookie val';
+          return -505;
+
+        endif;
+
+      endif;
+
+
+    else:
+
+        echo 'No cookie found';
+        return -500;
+
+    endif;
+
+
+    return true;
+
+  } // check_cookie()
 
 
 
@@ -584,6 +708,54 @@ class epohs_Anti_Spam {
 
 
 
+
+function get_client_ip() {
+
+  $ip_address = false;
+
+  if ( isset($_SERVER['HTTP_CLIENT_IP']) ):
+
+    $ip_address = $_SERVER['HTTP_CLIENT_IP'];
+
+  elseif ( isset($_SERVER['HTTP_X_FORWARDED_FOR']) ):
+
+    $ip_address = $_SERVER['HTTP_X_FORWARDED_FOR'];
+
+  elseif ( isset($_SERVER['HTTP_X_FORWARDED']) ):
+
+    $ip_address = $_SERVER['HTTP_X_FORWARDED'];
+
+  elseif ( isset($_SERVER['HTTP_FORWARDED_FOR']) ):
+
+    $ip_address = $_SERVER['HTTP_FORWARDED_FOR'];
+
+  elseif ( isset($_SERVER['HTTP_FORWARDED']) ):
+
+    $ip_address = $_SERVER['HTTP_FORWARDED'];
+
+  elseif ( isset($_SERVER['REMOTE_ADDR']) ):
+
+    $ip_address = $_SERVER['REMOTE_ADDR'];
+
+  endif;
+
+
+  // Allow localhost if debug is true
+  if (EAS_DEBUG):
+    $ip_address = ($ip_address = '::1') ? '127.0.0.1' : false;
+  endif;
+
+
+    $this->log('IP: ' . var_export($ip_address, true) . __LINE__);
+
+  return $ip_address;
+}
+
+
+
+
+
+
   /**
    * 
    * @since 0.0.1
@@ -716,6 +888,13 @@ class epohs_Anti_Spam {
     try {
 
       // Create items table
+      $db->exec("CREATE TABLE IF NOT EXISTS forms (
+                              `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                              `ip` VARCHAR(128) NOT NULL,
+                              `form_nonce` VARCHAR(128) NOT NULL,
+                              `created` DATETIME DEFAULT CURRENT_TIMESTAMP NOT NULL);");
+
+      // Create items table
       $db->exec("CREATE TABLE IF NOT EXISTS visitors (
                               `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
                               `ip` VARCHAR(128) NOT NULL,
@@ -733,22 +912,36 @@ class epohs_Anti_Spam {
 
       $db->exec("CREATE INDEX attempt_id_index ON attempts(visitor_id);");
 
+
+      $db->exec("CREATE TRIGGER update_existing_form BEFORE INSERT ON forms
+                  WHEN ( (NEW.ip IS NOT NULL) AND
+                         ((SELECT COUNT(f.id)
+                            FROM `forms` AS f
+                            WHERE f.ip = NEW.ip) >= 1) )
+                  BEGIN
+                    UPDATE `forms` SET `created` = CURRENT_TIMESTAMP,
+                                  `form_nonce` = NEW.form_nonce
+                                  WHERE `id` = (SELECT COUNT(f.id)
+                                              FROM `forms` AS f
+                                              WHERE f.ip = NEW.ip);
+                    SELECT RAISE (IGNORE);
+                  END;");
+
+
+      $db->exec("CREATE TRIGGER form_ip_check AFTER INSERT ON forms
+                  WHEN (LENGTH(NEW.ip) < 7)
+                  BEGIN
+                    SELECT RAISE (ABORT, 'Must have an IP.');
+                  END;");
+
+
+      $db->exec("CREATE TRIGGER clear_old_forms AFTER INSERT ON forms
+                  BEGIN
+                     DELETE FROM forms WHERE DATE(`created`) > DATE('now', '-" . $this->config_var(['tests', 'timestamp_details', 'fail_older_than']) . " seconds');
+                  END;");
                   
       
-      // When we create a new rating relationship we
-      // need to check to verify whether there is a
-      // primary rating. If not, make this one it.
-      // $db->exec("CREATE TRIGGER insert_rating_rel_req_primary AFTER INSERT ON item_ratings
-      //             WHEN ( (NEW.item_id IS NOT NULL) AND
-      //                    (NEW.rating_id IS NOT NULL) AND
-      //                    ((SELECT COUNT(i2r.id)
-      //                       FROM item_ratings AS i2r
-      //                       WHERE i2r.item_id = NEW.item_id) <= 1) )
-      //             BEGIN
-      //               -- Set this rating to primary
-      //               UPDATE ratings SET is_primary = 1 WHERE id = NEW.rating_id;
-                  
-      //             END;");
+
                   
 
       $this->log('tables did not exist. making them now.');
@@ -764,6 +957,81 @@ class epohs_Anti_Spam {
     }
 
   } // make_tables()
+
+
+
+
+
+
+
+
+  /**
+   * 
+   * @since 0.0.1
+   * 
+   * @return int|false
+   */
+  function insert_form_nonce($nonce = false, $ip = false) {
+
+    if ( !$nonce ) { return false; }
+
+    $visitor_ip = ( $ip ) ? $ip : $this->get_client_ip();
+
+
+    try {
+
+      $sql = "INSERT INTO `forms` (`ip`, `form_nonce`) VALUES(:ip, :nonce)";
+      
+      $stmt = $this->db->prepare($sql, array(PDO::ATTR_CURSOR => PDO::CURSOR_FWDONLY));
+
+      $stmt->execute(array(':ip' => $visitor_ip, ':nonce' => $nonce));
+
+    } catch ( PDOException $e ) {
+
+      $this->log($e->getMessage());
+      return false;
+
+    }
+
+    return $this->db->lastInsertId();
+
+  } // insert_form_nonce()
+
+
+
+
+
+
+
+  /**
+   * 
+   * @since 0.0.1
+   * 
+   * @return int|false
+   */
+  function get_form_nonce($ip = false) {
+
+    $visitor_ip = ( $ip ) ? $ip : $this->get_client_ip();
+
+
+    try {
+
+      $sql = "SELECT `form_nonce` FROM `forms` WHERE ip = '{$visitor_ip}'";
+      $stmt = $this->db->prepare($sql);
+      $stmt->execute();
+
+      return $stmt->fetch(PDO::FETCH_COLUMN);
+
+    } catch ( PDOException $e ) {
+
+      $this->log($e->getMessage());
+      return false;
+
+    }
+
+  } // get_form_nonce()
+
+
 
 
 

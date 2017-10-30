@@ -30,6 +30,7 @@
     }
   },
   "use_database": true,
+  "form_id_name": "easid",
   "db_type": "sqlite",
   "db_details": {
     "host": "localhost",
