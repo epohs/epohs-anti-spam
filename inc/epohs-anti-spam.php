@@ -84,8 +84,9 @@ class epohs_Anti_Spam {
 
 
 
-    // Close file db connection
-    //$this->db = null;
+
+
+
 
   } // __construct()
 
@@ -127,7 +128,14 @@ class epohs_Anti_Spam {
       endif;
 
 
-      $this->insert_form_nonce($form_nonce, $visitor_ip);
+      // We do not want to overwrite our stored
+      // form nonce if we are testing a submitted form.
+      if ( !$this->get_form_nonce() ):
+
+        $this->insert_form_nonce($form_nonce, $visitor_ip);
+
+      endif;
+
       
       // Write a hidden field containing our unique form ID
       $this->form_field($field_args);
@@ -512,16 +520,17 @@ class epohs_Anti_Spam {
 
           // If we're using a database, we can
           // check to ensure that not only is
-          // the timestamp a valid timestam, but
+          // the timestamp a valid timestamp, but
           // that is is the actual timestamp we
           // assigned to the original form.
           if ( $this->config_var('use_database') ):
 
-            $passed_form_id = ( isset($_POST[$this->config_var('form_id_name')]) ) ? trim($_POST[$this->config_var('form_id_name')]) : false;
-            $db_nonce = $this->get_form_nonce();
+            $passed_form_id = $this->get_form_nonce();
+            $db_nonce = $this->get_form_nonce(true);
 
 
             $this->log('db_nonce: ' . var_export($db_nonce, true) . __LINE__);
+            $this->log('passed_form_id: ' . var_export($passed_form_id, true) . __LINE__);
 
             if ( ($db_nonce == false) || ($passed_form_id != $db_nonce) ):
 
@@ -1009,25 +1018,37 @@ function get_client_ip() {
    * 
    * @return int|false
    */
-  function get_form_nonce($ip = false) {
+  function get_form_nonce($from_db = false, $ip = false) {
 
-    $visitor_ip = ( $ip ) ? $ip : $this->get_client_ip();
+    // Try to find a matching row in 
+    // the database.
+    if ($from_db):
+
+      $visitor_ip = ( $ip ) ? $ip : $this->get_client_ip();
 
 
-    try {
+      try {
 
-      $sql = "SELECT `form_nonce` FROM `forms` WHERE ip = '{$visitor_ip}'";
-      $stmt = $this->db->prepare($sql);
-      $stmt->execute();
+        $sql = "SELECT `form_nonce` FROM `forms` WHERE ip = '{$visitor_ip}'";
+        $stmt = $this->db->prepare($sql);
+        $stmt->execute();
 
-      return $stmt->fetch(PDO::FETCH_COLUMN);
+        return $stmt->fetch(PDO::FETCH_COLUMN);
 
-    } catch ( PDOException $e ) {
+      } catch ( PDOException $e ) {
 
-      $this->log($e->getMessage());
-      return false;
+        $this->log($e->getMessage());
+        return false;
 
-    }
+      }
+
+    // Check to see if we have a form nonce
+    // in sent along with the form submission.
+    else:
+
+      return ( isset($_POST[$this->config_var('form_id_name')]) ) ? trim($_POST[$this->config_var('form_id_name')]) : false;
+
+    endif;
 
   } // get_form_nonce()
 
@@ -1194,7 +1215,23 @@ function get_client_ip() {
     return true;
 
   } // log()
-}
+
+
+
+
+
+
+
+
+  public function __destruct() {
+    // Close file db connection
+    $this->db = null;
+  }
+
+
+
+
+} // epohs_Anti_Spam
 
 
 
